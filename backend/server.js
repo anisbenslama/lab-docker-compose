@@ -1,103 +1,171 @@
-const express = require('express');
-const mysql = require('mysql2/promise');
-const cors = require('cors');
+const express = require("express");
+const mysql = require("mysql2/promise"); // Use promise version
+const cors = require("cors");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Configuration MySQL
+// ===============================
+// 📌 Database Configuration
+// ===============================
 const dbConfig = {
-    host: process.env.DB_HOST || 'database',
-    port: process.env.DB_PORT || 3306,
-    user: process.env.MYSQL_USER || 'todo_user',
-    password: process.env.MYSQL_PASSWORD || 'todo_password',
-    database: process.env.MYSQL_DATABASE || 'todo_db'
+  host: process.env.DB_HOST || "database",
+  user: process.env.MYSQL_USER || "todo_user",
+  password: process.env.MYSQL_PASSWORD || "todo_password",
+  database: process.env.MYSQL_DATABASE || "todo_db",
+  port: process.env.DB_PORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  // This fixes MySQL 8.0 authentication issue
+  authPlugins: {
+    mysql_clear_password: () => () => Buffer.from(process.env.MYSQL_PASSWORD + '\0')
+  }
 };
 
 let pool;
 
-// Initialisation de la connexion MySQL
-async function initDB() {
+// Retry connection until MySQL is ready
+async function connectWithRetry() {
+  let retries = 10;
+  
+  while (retries) {
     try {
-        pool = mysql.createPool(dbConfig);
-        
-        // Tester la connexion
-        const connection = await pool.getConnection();
-        console.log('✅ Connecté à MySQL');
-        connection.release();
-    } catch (error) {
-        console.error('❌ Erreur MySQL:', error);
-        process.exit(1);
+      // Create connection pool
+      pool = mysql.createPool(dbConfig);
+      
+      // Test the connection
+      const connection = await pool.getConnection();
+      console.log("✅ Connected to MySQL successfully");
+      
+      // Test if tasks table exists, create if not
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS tasks (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          description TEXT,
+          status ENUM('todo', 'in_progress', 'done') DEFAULT 'todo',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+      console.log("✅ Tasks table ready");
+      
+      connection.release();
+      return pool;
+    } catch (err) {
+      console.log(`⏳ MySQL not ready, retrying in 5 seconds... (${retries} attempts left)`);
+      console.log('Error details:', err.message);
+      retries -= 1;
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
+  }
+  
+  console.error("❌ Failed to connect to MySQL after multiple retries");
+  process.exit(1);
 }
 
-// Routes
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'OK', timestamp: new Date() });
+// Initialize connection
+connectWithRetry();
+
+// ===============================
+// 📌 Health Check (important for Docker)
+// ===============================
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
 });
 
-// GET toutes les tâches
-app.get('/api/tasks', async (req, res) => {
-    try {
-        const [rows] = await pool.execute('SELECT * FROM tasks ORDER BY created_at DESC');
-        res.json(rows);
-    } catch (error) {
-        console.error('Erreur GET /api/tasks:', error);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
-});
+// ===============================
+// 📌 CRUD Routes
+// ===============================
 
-// POST nouvelle tâche
-app.post('/api/tasks', async (req, res) => {
-    const { title, description, status = 'todo' } = req.body;
-    
+// ✅ CREATE
+app.post("/tasks", async (req, res) => {
+  try {
+    const { title, description, status } = req.body;
+
     if (!title) {
-        return res.status(400).json({ error: 'Le titre est requis' });
+      return res.status(400).json({ error: "Title is required" });
     }
+
+    const [result] = await pool.execute(
+      "INSERT INTO tasks (title, description, status) VALUES (?, ?, ?)",
+      [title, description || null, status || "todo"]
+    );
     
-    try {
-        const [result] = await pool.execute(
-            'INSERT INTO tasks (title, description, status) VALUES (?, ?, ?)',
-            [title, description, status]
-        );
-        
-        const [newTask] = await pool.execute('SELECT * FROM tasks WHERE id = ?', [result.insertId]);
-        res.status(201).json(newTask[0]);
-    } catch (error) {
-        console.error('Erreur POST /api/tasks:', error);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
+    res.status(201).json({ message: "Task created", id: result.insertId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// DELETE une tâche
-app.delete('/api/tasks/:id', async (req, res) => {
-    try {
-        const [result] = await pool.execute('DELETE FROM tasks WHERE id = ?', [req.params.id]);
-        
-        if (result.affectedRows === 0) {
-            res.status(404).json({ error: 'Tâche non trouvée' });
-        } else {
-            res.status(204).send();
-        }
-    } catch (error) {
-        console.error('Erreur DELETE /api/tasks/:id:', error);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
+// ✅ READ ALL
+app.get("/tasks", async (req, res) => {
+  try {
+    const [results] = await pool.execute("SELECT * FROM tasks ORDER BY created_at DESC");
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Démarrage du serveur
-async function startServer() {
-    await initDB();
+// ✅ READ ONE
+app.get("/tasks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [results] = await pool.execute("SELECT * FROM tasks WHERE id = ?", [id]);
     
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Backend démarré sur http://0.0.0.0:${PORT}`);
-        console.log(`📊 Health check: http://0.0.0.0:${PORT}/health`);
-        console.log(`📝 API: http://0.0.0.0:${PORT}/api/tasks`);
-    });
-}
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Task not found" });
+    }
 
-startServer();
+    res.json(results[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ UPDATE
+app.put("/tasks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, status } = req.body;
+
+    const [result] = await pool.execute(
+      "UPDATE tasks SET title=?, description=?, status=? WHERE id=?",
+      [title, description, status, id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    res.json({ message: "Task updated" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ DELETE
+app.delete("/tasks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await pool.execute("DELETE FROM tasks WHERE id=?", [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    res.json({ message: "Task deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Start Server
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});

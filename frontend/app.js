@@ -1,208 +1,179 @@
-// URL fixe du backend
-const API_URL = 'http://backend:3000';
+const API_URL = document.querySelector('meta[name="api-url"]')?.content || 
+                document.body.dataset.apiUrl || 
+                'http://localhost:3000';
 
-console.log('🌐 API URL utilisée:', API_URL);
+
+// Afficher l'URL de l'API dans le footer
 document.getElementById('apiUrl').textContent = API_URL;
+
+// Fonction pour gérer les erreurs de fetch
+async function handleFetchResponse(response) {
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || `Erreur HTTP: ${response.status}`);
+    }
+    return response.json();
+}
 
 // Charger les tâches au démarrage
 document.addEventListener('DOMContentLoaded', () => {
-    fetchTasks();
+    loadTasks();
+    testApiConnection();
 });
 
 // Gérer la soumission du formulaire
 document.getElementById('taskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
+    const formData = new FormData(e.target);
     const task = {
-        title: document.getElementById('title').value,
-        description: document.getElementById('description').value,
-        status: document.getElementById('status').value
+        title: formData.get('title'),
+        description: formData.get('description') || null,
+        status: formData.get('status')
     };
-    
+
     try {
-        const response = await fetch(`${API_URL}/api/tasks`, {
+        const response = await fetch(`${API_URL}/tasks`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
             },
             body: JSON.stringify(task)
         });
+
+        const result = await handleFetchResponse(response);
+        console.log('Tâche créée:', result);
         
-        if (response.ok) {
-            // Réinitialiser le formulaire
-            document.getElementById('taskForm').reset();
-            
-            // Recharger immédiatement la liste des tâches
-            await fetchTasks();
-            
-            // Afficher un message de succès temporaire
-            showMessage('✅ Tâche ajoutée avec succès!', 'success');
-        } else {
-            showMessage('❌ Erreur lors de l\'ajout de la tâche', 'error');
-        }
+        // Réinitialiser le formulaire
+        e.target.reset();
+        
+        // Recharger la liste des tâches
+        await loadTasks();
+        
+        // Afficher un message de succès
+        showNotification('Tâche ajoutée avec succès!', 'success');
+        
     } catch (error) {
         console.error('Erreur:', error);
-        showMessage('❌ Erreur de connexion au serveur', 'error');
+        showNotification('Erreur lors de l\'ajout de la tâche', 'error');
     }
 });
 
-// Fonction pour afficher des messages temporaires
-function showMessage(text, type) {
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${type}`;
-    messageDiv.textContent = text;
-    messageDiv.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 15px 20px;
-        border-radius: 5px;
-        color: white;
-        font-weight: bold;
-        z-index: 1000;
-        animation: slideIn 0.3s ease;
-    `;
-    
-    if (type === 'success') {
-        messageDiv.style.backgroundColor = '#4caf50';
-    } else {
-        messageDiv.style.backgroundColor = '#f44336';
-    }
-    
-    document.body.appendChild(messageDiv);
-    
-    // Disparaître après 3 secondes
-    setTimeout(() => {
-        messageDiv.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => {
-            document.body.removeChild(messageDiv);
-        }, 300);
-    }, 3000);
-}
-
-// Ajouter les animations CSS
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
-    }
-    
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);
-
 // Fonction pour charger les tâches
-async function fetchTasks() {
+async function loadTasks() {
     const tasksContainer = document.getElementById('tasks');
-    tasksContainer.innerHTML = '<div class="loading">Chargement...</div>';
     
     try {
-        const response = await fetch(`${API_URL}/api/tasks`);
+        tasksContainer.innerHTML = '<div class="loading">Chargement...</div>';
         
-        if (!response.ok) {
-            throw new Error('Erreur réseau');
+        const response = await fetch(`${API_URL}/tasks`);
+        const tasks = await handleFetchResponse(response);
+        
+        if (tasks.length === 0) {
+            tasksContainer.innerHTML = '<div class="empty-state">Aucune tâche pour le moment</div>';
+            return;
         }
         
-        const tasks = await response.json();
         displayTasks(tasks);
+        
     } catch (error) {
-        console.error('Erreur:', error);
-        tasksContainer.innerHTML = '<div class="loading">Erreur de chargement des tâches</div>';
+        console.error('Erreur chargement:', error);
+        tasksContainer.innerHTML = `<div class="error">Erreur de chargement: ${error.message}</div>`;
     }
 }
 
 // Afficher les tâches
 function displayTasks(tasks) {
     const tasksContainer = document.getElementById('tasks');
+    tasksContainer.innerHTML = '';
     
-    if (!tasks || tasks.length === 0) {
-        tasksContainer.innerHTML = '<div class="loading">Aucune tâche pour le moment</div>';
-        return;
-    }
-    
-    tasksContainer.innerHTML = tasks.map(task => `
-        <div class="task-card" data-id="${task.id}">
+    tasks.forEach(task => {
+        const taskCard = document.createElement('div');
+        taskCard.className = `task-card status-${task.status}`;
+        taskCard.innerHTML = `
             <h3>${escapeHtml(task.title)}</h3>
-            <p>${escapeHtml(task.description || 'Pas de description')}</p>
-            <span class="status ${task.status}">${getStatusLabel(task.status)}</span>
-            <div class="task-actions">
-                <button class="delete-btn" onclick="deleteTask(${task.id})">Supprimer</button>
-                <button class="edit-btn" onclick="editTask(${task.id})">Modifier</button>
+            ${task.description ? `<p>${escapeHtml(task.description)}</p>` : ''}
+            <div class="task-meta">
+                <span class="status-badge status-${task.status}">
+                    ${getStatusLabel(task.status)}
+                </span>
+                <small>Créée: ${formatDate(task.created_at)}</small>
             </div>
-        </div>
-    `).join('');
+            <div class="task-actions">
+                <select class="status-select" data-id="${task.id}">
+                    <option value="todo" ${task.status === 'todo' ? 'selected' : ''}>À faire</option>
+                    <option value="in_progress" ${task.status === 'in_progress' ? 'selected' : ''}>En cours</option>
+                    <option value="done" ${task.status === 'done' ? 'selected' : ''}>Terminé</option>
+                </select>
+                <button class="delete-btn" onclick="deleteTask(${task.id})">🗑️ Supprimer</button>
+            </div>
+        `;
+        tasksContainer.appendChild(taskCard);
+    });
+
+    // Ajouter les écouteurs pour les changements de statut
+    document.querySelectorAll('.status-select').forEach(select => {
+        select.removeEventListener('change', updateTaskStatus);
+        select.addEventListener('change', updateTaskStatus);
+    });
+}
+
+// Mettre à jour le statut d'une tâche
+async function updateTaskStatus(e) {
+    const taskId = e.target.dataset.id;
+    const newStatus = e.target.value;
+    
+    try {
+        // Récupérer d'abord la tâche pour avoir les données actuelles
+        const response = await fetch(`${API_URL}/tasks/${taskId}`);
+        const task = await handleFetchResponse(response);
+        
+        // Mettre à jour avec le nouveau statut
+        const updateResponse = await fetch(`${API_URL}/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                title: task.title,
+                description: task.description,
+                status: newStatus
+            })
+        });
+        
+        await handleFetchResponse(updateResponse);
+        showNotification('Statut mis à jour!', 'success');
+        
+    } catch (error) {
+        console.error('Erreur mise à jour:', error);
+        showNotification('Erreur lors de la mise à jour', 'error');
+        // Recharger pour annuler le changement
+        await loadTasks();
+    }
 }
 
 // Supprimer une tâche
-async function deleteTask(id) {
-    if (!confirm('Supprimer cette tâche ?')) return;
+window.deleteTask = async (id) => {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer cette tâche ?')) {
+        return;
+    }
     
     try {
-        const response = await fetch(`${API_URL}/api/tasks/${id}`, {
+        const response = await fetch(`${API_URL}/tasks/${id}`, {
             method: 'DELETE'
         });
         
-        if (response.ok) {
-            await fetchTasks(); // Recharger la liste
-            showMessage('✅ Tâche supprimée!', 'success');
-        } else {
-            showMessage('❌ Erreur lors de la suppression', 'error');
-        }
-    } catch (error) {
-        console.error('Erreur:', error);
-        showMessage('❌ Erreur de connexion', 'error');
-    }
-}
-
-// Modifier une tâche
-async function editTask(id) {
-    const newTitle = prompt('Nouveau titre:');
-    if (!newTitle) return;
-    
-    try {
-        const response = await fetch(`${API_URL}/api/tasks/${id}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ title: newTitle })
-        });
+        await handleFetchResponse(response);
+        await loadTasks();
+        showNotification('Tâche supprimée!', 'success');
         
-        if (response.ok) {
-            await fetchTasks(); // Recharger la liste
-            showMessage('✅ Tâche modifiée!', 'success');
-        } else {
-            showMessage('❌ Erreur lors de la modification', 'error');
-        }
     } catch (error) {
-        console.error('Erreur:', error);
-        showMessage('❌ Erreur de connexion', 'error');
+        console.error('Erreur suppression:', error);
+        showNotification('Erreur lors de la suppression', 'error');
     }
-}
+};
 
-// Helpers
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text || '';
-    return div.innerHTML;
-}
-
+// Fonctions utilitaires
 function getStatusLabel(status) {
     const labels = {
         'todo': 'À faire',
@@ -210,4 +181,60 @@ function getStatusLabel(status) {
         'done': 'Terminé'
     };
     return labels[status] || status;
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'Date inconnue';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function escapeHtml(unsafe) {
+    if (!unsafe) return '';
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function showNotification(message, type) {
+    // Supprimer l'ancienne notification si elle existe
+    const oldNotification = document.querySelector('.notification');
+    if (oldNotification) {
+        oldNotification.remove();
+    }
+    
+    // Créer une nouvelle notification
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 3000);
+}
+
+// Test de connexion à l'API au chargement
+async function testApiConnection() {
+    try {
+        const response = await fetch(`${API_URL}/health`);
+        if (response.ok) {
+            console.log('✅ Connecté à l\'API backend');
+            document.body.classList.add('api-connected');
+        } else {
+            console.warn('⚠️ Problème de connexion à l\'API');
+        }
+    } catch (error) {
+        console.error('❌ Impossible de se connecter à l\'API:', error.message);
+        showNotification('Impossible de contacter le backend', 'error');
+    }
 }
