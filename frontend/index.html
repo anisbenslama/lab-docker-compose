@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+     <meta name="api-url" content="http://backend:3000">
+    <title>Todo App </title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body data-api-url="http://backend:3000">
+    <div class="container">
+        <header>
+            <h1>📝 Liste de tâches</h1>
+            <p class="subtitle">Application déployée avec Docker Compose</p>
+        </header>
+
+        <main>
+            <section class="add-task">
+                <h2>Ajouter une nouvelle tâche</h2>
+                <form id="taskForm">
+                    <div class="form-group">
+                        <label for="title">Titre :</label>
+                        <input type="text" id="title" name="title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="description">Description :</label>
+                        <textarea id="description" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="status">Statut :</label>
+                        <select id="status" name="status">
+                            <option value="todo">À faire</option>
+                            <option value="in_progress">En cours</option>
+                            <option value="done">Terminé</option>
+                        </select>
+                    </div>
+                    <button type="submit">Ajouter</button>
+                </form>
+            </section>
+
+            <section class="tasks-list">
+                <h2>Toutes les tâches</h2>
+                <div id="tasks" class="tasks-grid">
+                    <div class="loading">Chargement...</div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Backend API: <span id="apiUrl"></span></p>
+            <p>Docker Compose | Frontend isolé | Réseaux segmentés</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
